@@ -174,6 +174,12 @@ async function flipkartCategory(id) {
   } catch(error) { return {status:502,body:{error:error.message||'Could not load this Flipkart category.'}}; }
 }
 function readJsonBody(req, maxBytes=10_000_000) {
+  // Vercel's Node runtime may parse JSON bodies before invoking the function.
+  if (req.body !== undefined && req.body !== null) {
+    if (typeof req.body === 'object') return Promise.resolve(req.body);
+    try { return Promise.resolve(JSON.parse(String(req.body))); }
+    catch { return Promise.reject(new Error('Invalid request body.')); }
+  }
   return new Promise((resolve,reject)=>{
     let body='',size=0;
     req.on('data',chunk=>{size+=chunk.length;if(size>maxBytes){reject(new Error('Photo is too large. Please try again with a smaller image.'));req.destroy();return}body+=chunk.toString('utf8')});
@@ -242,7 +248,7 @@ async function serveStatic(urlPath, res) {
     res.end(content);
   } catch { res.writeHead(404); res.end('Not found'); }
 }
-const server = http.createServer(async (req, res) => {
+async function handler(req, res) {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const tryOnImageMatch=url.pathname.match(/^\/api\/tryon-image\/([a-f0-9]{64})$/);
   if(tryOnImageMatch&&req.method==='GET'){
@@ -287,5 +293,13 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method !== 'GET' || url.pathname.startsWith('/api/')) { send(res, 404, { error:'Not found' }); return; }
   serveStatic(url.pathname, res);
-});
-server.listen(PORT, () => console.log(`Snap Store running at http://localhost:${PORT}`));
+}
+
+// Vercel invokes the exported handler as a serverless function. Keep the
+// standalone HTTP server for local development.
+if (require.main === module) {
+  const server = http.createServer(handler);
+  server.listen(PORT, () => console.log(`Snap Store running at http://localhost:${PORT}`));
+}
+
+module.exports = handler;
