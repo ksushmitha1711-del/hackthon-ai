@@ -1,0 +1,12 @@
+{
+  "name": "Snap Store",
+  "short_name": "Snap Store",
+  "description": "Good finds and happy prices from Snap Store.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f6f5f1",
+  "theme_color": "#31412d",
+  "icons": [
+    {"src":"/icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+  ]
+}

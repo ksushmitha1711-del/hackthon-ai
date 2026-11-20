@@ -77,6 +77,36 @@ create index products_category_active on public.products(category_id, is_active)
 create index products_price on public.products(price_paise) where is_active;
 create index products_search on public.products using gin (to_tsvector('simple', coalesce(name,'') || ' ' || coalesce(brand,'') || ' ' || coalesce(description,'')));
 
+-- A single Snap Store product may have separately sourced marketplace listings.
+-- Keep retailer IDs, prices, ratings and links tied to their original source.
+create table public.marketplace_listings (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references public.products(id) on delete cascade,
+  marketplace text not null check (marketplace in ('amazon','flipkart','meesho')),
+  external_product_id text not null,
+  product_url text not null,
+  affiliate_url text,
+  listing_title text not null,
+  image_url text,
+  price_paise integer check (price_paise is null or price_paise >= 0),
+  mrp_paise integer check (mrp_paise is null or mrp_paise >= price_paise),
+  -- Ratings are nullable and provider-specific; never infer product ratings from seller scores.
+  product_rating numeric(2,1) check (product_rating is null or product_rating between 0 and 5),
+  product_rating_count integer check (product_rating_count is null or product_rating_count >= 0),
+  seller_rating numeric(2,1) check (seller_rating is null or seller_rating between 0 and 5),
+  seller_rating_count integer check (seller_rating_count is null or seller_rating_count >= 0),
+  reviews_url text,
+  source_attribution text not null,
+  checked_at timestamptz,
+  is_available boolean not null default true,
+  provider_metadata jsonb not null default '{}',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique(marketplace, external_product_id)
+);
+create index marketplace_listings_product on public.marketplace_listings(product_id, is_available);
+create index marketplace_listings_market_price on public.marketplace_listings(marketplace, price_paise) where is_available;
+
 create table public.carts (
   user_id uuid not null references public.profiles(id) on delete cascade,
   product_id uuid not null references public.products(id) on delete cascade,
@@ -193,6 +223,30 @@ create table public.notifications (
   created_at timestamptz not null default now()
 );
 
+-- Phone price alerts: delivery is handled by a trusted push worker, never by the LLM.
+create table public.price_alerts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  product_id uuid not null references public.products(id) on delete cascade,
+  target_price_paise integer not null check (target_price_paise > 0),
+  active boolean not null default true,
+  last_notified_at timestamptz,
+  created_at timestamptz not null default now(),
+  unique(user_id, product_id)
+);
+create index price_alerts_active_target on public.price_alerts(active, target_price_paise);
+
+create table public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  endpoint text not null unique,
+  subscription jsonb not null,
+  device_label text,
+  created_at timestamptz not null default now(),
+  last_seen_at timestamptz not null default now()
+);
+create index push_subscriptions_user on public.push_subscriptions(user_id);
+
 -- Role checks are centralized and security definer avoids recursive profile RLS.
 create or replace function public.has_role(required_role public.app_role)
 returns boolean language sql stable security definer set search_path = public
@@ -230,6 +284,7 @@ alter table public.addresses enable row level security;
 alter table public.categories enable row level security;
 alter table public.sellers enable row level security;
 alter table public.products enable row level security;
+alter table public.marketplace_listings enable row level security;
 alter table public.carts enable row level security;
 alter table public.wishlist enable row level security;
 alter table public.coupons enable row level security;
@@ -240,6 +295,8 @@ alter table public.cashback_transactions enable row level security;
 alter table public.returns enable row level security;
 alter table public.refunds enable row level security;
 alter table public.notifications enable row level security;
+alter table public.price_alerts enable row level security;
+alter table public.push_subscriptions enable row level security;
 
 create policy "Profiles view own" on public.profiles for select using (id = auth.uid() or public.has_role('admin'));
 create policy "Profiles update own" on public.profiles for update using (id = auth.uid() or public.has_role('admin')) with check (id = auth.uid() or public.has_role('admin'));
@@ -248,6 +305,7 @@ create policy "Active categories readable" on public.categories for select using
 create policy "Approved products readable" on public.products for select using (is_active and (seller_id is null or exists(select 1 from public.sellers s where s.id = seller_id and s.status = 'approved')) or public.has_role('admin'));
 create policy "Sellers view own" on public.sellers for select using (owner_id = auth.uid() or public.has_role('admin'));
 create policy "Seller product management" on public.products for all using (public.has_role('admin') or exists(select 1 from public.sellers s where s.id = seller_id and s.owner_id = auth.uid() and s.status = 'approved')) with check (public.has_role('admin') or exists(select 1 from public.sellers s where s.id = seller_id and s.owner_id = auth.uid() and s.status = 'approved'));
+create policy "Available marketplace listings readable" on public.marketplace_listings for select using (is_available or public.has_role('admin'));
 create policy "Cart manage own" on public.carts for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 create policy "Wishlist manage own" on public.wishlist for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 create policy "Active coupons readable" on public.coupons for select using (is_active or public.has_role('admin'));
@@ -260,6 +318,8 @@ create policy "Returns request own" on public.returns for insert with check (use
 create policy "Refunds view own" on public.refunds for select using (exists(select 1 from public.returns r where r.id = return_id and (r.user_id = auth.uid() or public.has_role('admin'))));
 create policy "Notifications view own" on public.notifications for select using (user_id = auth.uid() or public.has_role('admin'));
 create policy "Notifications update own" on public.notifications for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "Price alerts manage own" on public.price_alerts for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+create policy "Push subscriptions manage own" on public.push_subscriptions for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 -- Orders, payments, wallet changes, inventory and privileged administration should
 -- be written by trusted backend functions (service role), never by browser clients.

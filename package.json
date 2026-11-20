@@ -1,0 +1,12 @@
+{
+  "name": "snap-store",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Snap Store storefront with a server-side Flipkart Affiliate API connector",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
