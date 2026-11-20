@@ -191,7 +191,8 @@ async function klingTryOn(modelImage,garmentImage) {
   const key=process.env.KLING_API_KEY;
   if(!key)return {status:503,body:{error:'Kling try-on is not configured. Add KLING_API_KEY to the server .env file.'}};
   let publicBase;
-  try{publicBase=new URL(process.env.PUBLIC_BASE_URL||'')}catch{return {status:503,body:{error:'Kling needs a public HTTPS site URL to read the temporary person photo. Set PUBLIC_BASE_URL after deploying Snap Store.'}}}
+  const configuredBase=process.env.PUBLIC_BASE_URL||(process.env.VERCEL_URL?`https://${process.env.VERCEL_URL}`:'');
+  try{publicBase=new URL(configuredBase)}catch{return {status:503,body:{error:'Kling needs a public HTTPS site URL to read the temporary person photo. Set PUBLIC_BASE_URL after deploying Snap Store.'}}}
   if(publicBase.protocol!=='https:'||['localhost','127.0.0.1','::1'].includes(publicBase.hostname))return {status:503,body:{error:'Kling cannot fetch photos from localhost. Deploy Snap Store over HTTPS and set PUBLIC_BASE_URL to that public URL.'}};
   if(typeof modelImage!=='string'||modelImage.length>9_000_000||!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(modelImage))return {status:400,body:{error:'The camera photo is missing or too large. Please retake it.'}};
   let garment;try{garment=new URL(garmentImage)}catch{return {status:400,body:{error:'Product image URL is invalid.'}}}
