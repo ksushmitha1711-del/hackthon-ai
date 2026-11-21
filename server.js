@@ -187,11 +187,11 @@ function readJsonBody(req, maxBytes=10_000_000) {
     req.on('error',reject);
   });
 }
-async function klingTryOn(modelImage,garmentImage) {
+async function klingTryOn(modelImage,garmentImage,requestBase) {
   const key=process.env.KLING_API_KEY;
   if(!key)return {status:503,body:{error:'Kling try-on is not configured. Add KLING_API_KEY to the server .env file.'}};
   let publicBase;
-  const configuredBase=process.env.PUBLIC_BASE_URL||(process.env.VERCEL_URL?`https://${process.env.VERCEL_URL}`:'');
+  const configuredBase=process.env.PUBLIC_BASE_URL||(process.env.VERCEL_URL?`https://${process.env.VERCEL_URL}`:requestBase||'');
   try{publicBase=new URL(configuredBase)}catch{return {status:503,body:{error:'Kling needs a public HTTPS site URL to read the temporary person photo. Set PUBLIC_BASE_URL after deploying Snap Store.'}}}
   if(publicBase.protocol!=='https:'||['localhost','127.0.0.1','::1'].includes(publicBase.hostname))return {status:503,body:{error:'Kling cannot fetch photos from localhost. Deploy Snap Store over HTTPS and set PUBLIC_BASE_URL to that public URL.'}};
   if(typeof modelImage!=='string'||modelImage.length>9_000_000||!/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(modelImage))return {status:400,body:{error:'The camera photo is missing or too large. Please retake it.'}};
@@ -258,7 +258,14 @@ async function handler(req, res) {
     res.writeHead(200,{'content-type':image.mime,'cache-control':'private, no-store, max-age=0','x-content-type-options':'nosniff'});res.end(image.bytes);return;
   }
   if(url.pathname==='/api/virtual-try-on'&&req.method==='POST'){
-    try{const body=await readJsonBody(req);const result=await klingTryOn(body.modelImage,body.garmentImage);send(res,result.status,result.body)}
+    try{
+      const proto=String(req.headers['x-forwarded-proto']||'https').split(',')[0].trim();
+      const host=String(req.headers['x-forwarded-host']||req.headers.host||'').split(',')[0].trim();
+      const requestBase=host?`${proto}://${host}`:'';
+      const body=await readJsonBody(req);
+      const result=await klingTryOn(body.modelImage,body.garmentImage,requestBase);
+      send(res,result.status,result.body);
+    }
     catch(error){if(!res.headersSent)send(res,400,{error:error.message||'Could not read the try-on request.'})}
     return;
   }
